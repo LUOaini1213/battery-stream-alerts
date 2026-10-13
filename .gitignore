@@ -1,0 +1,20 @@
+# build output
+target/
+*.class
+
+# raw / converted data is never committed (NASA catalog states no licence)
+data/
+*.mat
+*.parquet
+/fixtures/*
+!/fixtures/synthetic_telemetry.csv
+
+# per-run artefacts (alert id lists, replay reports, logs); summaries in results/*.json are committed
+results/run/
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+.env

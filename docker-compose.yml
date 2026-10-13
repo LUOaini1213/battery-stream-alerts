@@ -1,0 +1,126 @@
+# docker compose up -d --build        -> broker, database, Flink job, API
+# scripts/demo.sh                     -> replays the NASA CSV end to end and prints alert counts
+# Every container/volume/network is prefixed bsa-. Memory limits add up to < 3 GB.
+name: bsa
+
+x-build: &build
+  context: .
+  dockerfile: ${BSA_DOCKERFILE:-Dockerfile}
+
+services:
+  redpanda:
+    # Kafka-API-compatible broker in a single small process (no ZooKeeper/KRaft cluster to run).
+    image: redpandadata/redpanda:v25.3.17
+    container_name: bsa-redpanda
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=320M
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --default-log-level=warn
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "127.0.0.1:19092:19092"
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true' || exit 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  redpanda-init:
+    # One-shot: create the topic before the job subscribes to it (4 partitions, key = cell id).
+    image: redpandadata/redpanda:v25.3.17
+    container_name: bsa-redpanda-init
+    depends_on:
+      redpanda: { condition: service_healthy }
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["rpk topic create bms.telemetry --partitions 4 --replicas 1 -X brokers=redpanda:9092 || rpk topic describe bms.telemetry -X brokers=redpanda:9092"]
+    mem_limit: 128m
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: bsa-clickhouse
+    environment:
+      CLICKHOUSE_USER: bsa_admin
+      CLICKHOUSE_PASSWORD: ${BSA_ADMIN_PASSWORD:-local-admin-change-me}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+      BSA_WRITER_PASSWORD: ${BSA_WRITER_PASSWORD:-local-writer-change-me}
+      BSA_READER_PASSWORD: ${BSA_READER_PASSWORD:-local-reader-change-me}
+    volumes:
+      - ./clickhouse/init:/docker-entrypoint-initdb.d:ro
+      - ./clickhouse/config/low-memory.xml:/etc/clickhouse-server/config.d/low-memory.xml:ro
+      - bsa-chdata:/var/lib/clickhouse
+    ports:
+      - "127.0.0.1:18123:8123"
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    mem_limit: 768m
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse client --user bsa_admin --password \"$$CLICKHOUSE_PASSWORD\" -q 'EXISTS TABLE bsa.cycles' | grep -q 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  flink-job:
+    build: { <<: *build, target: flink-job }
+    image: bsa-flink-job:local
+    container_name: bsa-flink-job
+    depends_on:
+      redpanda-init: { condition: service_completed_successfully }
+      clickhouse: { condition: service_healthy }
+    environment:
+      KAFKA_BOOTSTRAP: redpanda:9092
+      KAFKA_TOPIC: bms.telemetry
+      KAFKA_GROUP: ${KAFKA_GROUP:-bsa-alert-job}
+      FLINK_PARALLELISM: "2"
+      CHECKPOINT_INTERVAL_MS: "5000"
+      CHECKPOINT_DIR: /checkpoints
+      RESUME_FROM_CHECKPOINT: ${RESUME_FROM_CHECKPOINT:-true}
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_DB: bsa
+      CLICKHOUSE_USER: bsa_writer
+      CLICKHOUSE_PASSWORD: ${BSA_WRITER_PASSWORD:-local-writer-change-me}
+    volumes:
+      - bsa-checkpoints:/checkpoints
+    mem_limit: 896m
+
+  api:
+    build: { <<: *build, target: api }
+    image: bsa-api:local
+    container_name: bsa-api
+    depends_on:
+      clickhouse: { condition: service_healthy }
+    environment:
+      CLICKHOUSE_JDBC_URL: jdbc:clickhouse:http://clickhouse:8123/bsa
+      CLICKHOUSE_USER: bsa_reader
+      CLICKHOUSE_PASSWORD: ${BSA_READER_PASSWORD:-local-reader-change-me}
+    ports:
+      - "127.0.0.1:${BSA_API_PORT:-18080}:8080"
+    mem_limit: 384m
+
+  replayer:
+    # One-shot: docker compose run --rm replayer --csv /data/telemetry.csv ...
+    build: { <<: *build, target: replayer }
+    image: bsa-replayer:local
+    profiles: ["replay"]
+    depends_on:
+      redpanda: { condition: service_healthy }
+    volumes:
+      - ${BSA_DATA_DIR:-./data}:/data:ro
+      - ./results/run:/results
+    mem_limit: 320m
+
+volumes:
+  bsa-chdata:
+    name: bsa-chdata
+  bsa-checkpoints:
+    name: bsa-checkpoints
+
+networks:
+  default:
+    name: bsa-net

@@ -1,0 +1,105 @@
+{
+  "mode": "reprocess",
+  "speedup": 5000.0,
+  "replay": {
+    "csv_rows": 185721,
+    "sample_records_sent": 185721,
+    "heartbeat_records_sent": 56512,
+    "wall_ms": 192327,
+    "records_per_s": 1259,
+    "partitions": 4,
+    "injected": {},
+    "expected_dq_alerts": {
+      "DQ_DUPLICATE": 0,
+      "DQ_GAP": 0,
+      "DQ_LATE": 0,
+      "DQ_OUT_OF_RANGE": 0
+    }
+  },
+  "rows": {
+    "telemetry": {
+      "raw": 265466,
+      "final": 185721,
+      "inserted": 371442
+    },
+    "cycles": {
+      "raw": 646,
+      "final": 636,
+      "inserted": 1272
+    },
+    "alerts": {
+      "raw": 943,
+      "final": 923,
+      "inserted": 1846
+    }
+  },
+  "alerts_by_type": {
+    "CAPACITY_DROP": 3,
+    "CAPACITY_EOL": 4,
+    "OVER_TEMPERATURE": 607,
+    "VOLTAGE_SAG": 309
+  },
+  "alerts_by_cell_and_type": {
+    "B0005": {
+      "CAPACITY_EOL": 1,
+      "OVER_TEMPERATURE": 178,
+      "VOLTAGE_SAG": 24
+    },
+    "B0006": {
+      "CAPACITY_DROP": 3,
+      "CAPACITY_EOL": 1,
+      "OVER_TEMPERATURE": 205,
+      "VOLTAGE_SAG": 82
+    },
+    "B0007": {
+      "CAPACITY_EOL": 1,
+      "OVER_TEMPERATURE": 224,
+      "VOLTAGE_SAG": 128
+    },
+    "B0018": {
+      "CAPACITY_EOL": 1,
+      "VOLTAGE_SAG": 75
+    }
+  },
+  "capacity_vs_nasa": {
+    "cycles_matched": 636,
+    "cycles_in_reference": 636,
+    "mean_abs_error_ah": 0.01304,
+    "max_abs_error_ah": 0.02802,
+    "mean_signed_error_ah": 0.01304,
+    "mean_abs_relative_error_pct": 0.84
+  },
+  "end_of_life": {
+    "B0005": {
+      "stream_eol_cycle": 102,
+      "nasa_capacity_eol_cycle": 102,
+      "nasa_initial_ah": 1.8461,
+      "nasa_last_ah": 1.3251
+    },
+    "B0006": {
+      "stream_eol_cycle": 61,
+      "nasa_capacity_eol_cycle": 61,
+      "nasa_initial_ah": 2.0246,
+      "nasa_last_ah": 1.1857
+    },
+    "B0007": {
+      "stream_eol_cycle": 125,
+      "nasa_capacity_eol_cycle": 125,
+      "nasa_initial_ah": 1.8841,
+      "nasa_last_ah": 1.4325
+    },
+    "B0018": {
+      "stream_eol_cycle": 77,
+      "nasa_capacity_eol_cycle": 77,
+      "nasa_initial_ah": 1.8459,
+      "nasa_last_ah": 1.3411
+    }
+  },
+  "vs_clean_run": {
+    "identical_alert_set": true,
+    "only_in_this_run": 0,
+    "only_in_clean_run": 0,
+    "non_dq_only_in_this_run": 0,
+    "non_dq_only_in_clean_run": 0
+  }
+}

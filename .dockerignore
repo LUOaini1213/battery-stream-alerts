@@ -1,0 +1,10 @@
+.git
+.github
+**/target/*
+!bsa-flink/target/bsa-flink-job.jar
+!bsa-replayer/target/bsa-replayer.jar
+!bsa-api/target/bsa-api.jar
+results
+data
+docs
+*.md

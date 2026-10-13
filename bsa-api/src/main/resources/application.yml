@@ -1,0 +1,40 @@
+server:
+  port: 8080
+  error:
+    include-stacktrace: never
+    include-message: always
+
+spring:
+  application:
+    name: bsa-api
+  mvc:
+    problemdetails:
+      enabled: true
+  datasource:
+    # Read-only ClickHouse user (SELECT grant only, readonly profile). Override via env in compose.
+    url: ${CLICKHOUSE_JDBC_URL:jdbc:clickhouse:http://localhost:8123/bsa}
+    username: ${CLICKHOUSE_USER:bsa_reader}
+    password: ${CLICKHOUSE_PASSWORD:}
+    driver-class-name: com.clickhouse.jdbc.ClickHouseDriver
+    hikari:
+      # the database user is read-only; telling the pool avoids it trying to switch the session to read-write
+      read-only: true
+      maximum-pool-size: 4
+      minimum-idle: 0
+      initialization-fail-timeout: -1
+      connection-timeout: 5000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html

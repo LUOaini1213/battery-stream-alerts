@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>demo.bsa</groupId>
+    <artifactId>battery-stream-alerts</artifactId>
+    <version>0.1.0</version>
+  </parent>
+  <artifactId>bsa-core</artifactId>
+  <description>Plain-Java model, wire codec and alert rules. No Flink dependency so the rules are unit-testable and mutation-testable in isolation.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.pitest</groupId>
+        <artifactId>pitest-maven</artifactId>
+        <configuration>
+          <targetClasses>
+            <param>bsa.core.rules.*</param>
+          </targetClasses>
+          <targetTests>
+            <param>bsa.core.*</param>
+          </targetTests>
+          <excludedTestClasses>
+            <param>bsa.core.ReadmeNumbersTest</param>
+          </excludedTestClasses>
+          <mutators>
+            <mutator>STRONGER</mutator>
+          </mutators>
+          <outputFormats>
+            <outputFormat>HTML</outputFormat>
+            <outputFormat>XML</outputFormat>
+          </outputFormats>
+          <timestampedReports>false</timestampedReports>
+          <threads>2</threads>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

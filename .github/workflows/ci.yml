@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      # Unit tests, Flink MiniCluster tests (in-JVM, no Docker), Spring MVC slice tests,
+      # and the README-numbers test. Nothing here needs Docker or the NASA data.
+      - name: Build and test
+        run: mvn -B -ntp verify
+      - name: Mutation testing of the alert rules (PIT)
+        run: mvn -B -ntp -pl bsa-core org.pitest:pitest-maven:mutationCoverage
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reports
+          path: |
+            **/target/surefire-reports/
+            bsa-core/target/pit-reports/
+          retention-days: 7
