@@ -10,6 +10,18 @@ locally with `docker compose`.
 > Spring Boot, Docker Compose, JUnit 5, PIT). The data is replayed laboratory data, not a real
 > battery fleet.
 
+**At a glance** (each value is pinned to its results file by `ReadmeNumbersTest`; details under
+[Results](#results-real-nasa-replay)). Limits: one node, four replayed lab cells, demo thresholds,
+and the end-to-end runs need Docker plus the NASA files, so CI checks the code and these pins, not a
+fresh replay.
+
+| headline | value | source |
+|---|---|---|
+| NASA samples replayed end to end | 185721 | <!-- e2e-clean.json:/replay/sample_records_sent --> |
+| mean relative difference, streamed vs NASA cycle capacity, % | 0.84 | <!-- e2e-clean.json:/capacity_vs_nasa/mean_abs_relative_error_pct --> |
+| alert set after a mid-run `docker kill` equals the clean run | true | <!-- e2e-crash.json:/vs_clean_run/identical_alert_set --> |
+| alert set after re-processing the whole topic equals the clean run | true | <!-- e2e-reprocess.json:/vs_clean_run/identical_alert_set --> |
+
 **中文摘要**：把 NASA 公开的锂电池循环老化数据当成 BMS 实时遥测回放进 Kafka（Redpanda），用 Flink（Java DataStream API，事件时间 + 水位线）按电芯计算过温、电压骤降、容量衰减和数据质量（缺数、越界、重复、迟到）告警，结果写入 ClickHouse（ReplacingMergeTree 幂等去重），再用 Spring Boot 提供只读 REST 接口。真实回放 185,721 个采样点：流式算出的每循环容量与 NASA 给出的容量平均差 0.84%，四个电芯的寿命终止（SOH<0.8）循环与 NASA 数据完全一致；注入的 40 重复 / 20 迟到 / 20 越界 / 20 丢点全部按数检出，40 个界内乱序零误报；中途 `kill -9` 作业后从 checkpoint 恢复，告警集合与无故障运行逐条一致。逐类讲解见 [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md)（中文）。
 
 ## Architecture
@@ -72,11 +84,14 @@ under these settings; they are not a validated detector. All values are environm
 ## Quick start
 
 Requirements: Docker with Compose v2 (no local JDK or Maven needed; Maven runs inside
-`maven:3.9-eclipse-temurin-17`). Python 3 with `scipy` only for the one-off data conversion.
+`maven:3.9-eclipse-temurin-17`). Python 3.11 with `numpy` and `scipy` (`pip install -r scripts/requirements.txt`) only for the one-off data
+conversion; the input check script needs only the standard library.
 
 ```bash
-# 1. get the NASA PCoE "Battery Data Set" (B0005, B0006, B0007, B0018 .mat files) and convert it
+# 1. get the NASA PCoE "Battery Data Set" (B0005, B0006, B0007, B0018 .mat files, see Data below)
+#    and convert it, then check the files and the converter totals against results/nasa-inputs.json
 python scripts/convert_nasa.py --raw-dir /path/to/mat/files --out-dir ./data
+python scripts/check_nasa_inputs.py --raw-dir /path/to/mat/files --data-dir ./data
 # 2. bring up broker, ClickHouse, the Flink job and the API (builds the jars inside Docker)
 docker compose up -d --build
 # 3. full end-to-end run: replay, wait for the job to drain, collect numbers, smoke-test the API
@@ -171,7 +186,7 @@ run below measured a telemetry p95 of 1061 ms.
 The replayer injected faults into randomly chosen cycles (seed 42, at most one per cycle, away
 from cycle edges) and wrote down what the job should report:
 
-| fault injected (count) | expected alerts | detected | source |
+| fault injected (count) | expected alerts | alerts of that type raised | source |
 |---|---|---|---|
 | 40 duplicates (re-sent 1 s later) | 40 `DQ_DUPLICATE` | 40 | <!-- e2e-faults.json:/dq_expected_vs_detected/DQ_DUPLICATE/detected --> |
 | 20 late (delivered 30 min late) | 20 `DQ_LATE` | 20 | <!-- e2e-faults.json:/dq_expected_vs_detected/DQ_LATE/detected --> |
@@ -183,6 +198,12 @@ from cycle edges) and wrote down what the job should report:
 | samples reordered by 5 s (inside the 20 s bound; must raise nothing) | 40 | <!-- e2e-faults.json:/replay/injected/REORDER --> |
 | non-DQ alerts present only in this run vs the clean run | 0 | <!-- e2e-faults.json:/vs_clean_run/non_dq_only_in_this_run --> |
 | non-DQ alerts present only in the clean run | 0 | <!-- e2e-faults.json:/vs_clean_run/non_dq_only_in_clean_run --> |
+
+"Alerts of that type raised" is a per-type count from ClickHouse (`scripts/collect_results.py`); it
+is not matched sample by sample against the injected (cell, cycle, seq) keys, so it shows the counts
+agree, not that every alert points at an injected sample. The MiniCluster test does check identity
+for late samples on the synthetic fixture. Key-level matching for the NASA run would need a new
+replayer report and a re-run, which has not been done.
 
 The in-bound reorders raised nothing, and none of the faults changed any temperature, sag or
 capacity alert (the dropped samples sit inside cycles and are interpolated over).
@@ -202,8 +223,9 @@ replayer kept producing.
 
 So 1 716 telemetry rows and 2 alerts written after the restored checkpoint (and before the kill)
 were written a second time after the restart, exactly the at-least-once behaviour described under
-Design decisions, and `ReplacingMergeTree` + `FINAL` removed them. The restore used checkpoint
-`chk-11` (the log line is captured in `results/run/crash-restore.log`).
+Design decisions, and `ReplacingMergeTree` + `FINAL` removed them. The job log reported a
+restore from a retained checkpoint (`chk-11`); that log is written to `results/run/`, which is not
+committed, so this detail rests on the local run rather than a file in this repository.
 
 ### Re-processing (`scripts/demo.sh reprocess`)
 
@@ -223,8 +245,12 @@ so it read the whole topic again and wrote every row a second time.
 
 `scripts/api-smoke.sh` (run at the end of every demo) checks health, every endpoint, 404 for
 unknown cells, 400 for an SQL-injection-shaped cell id, an over-large limit, an unknown alert type,
-a missing or malformed `since`, and that the API's database user cannot `INSERT`. Output of each run:
-`results/run/api-smoke-*.txt` (not committed); all 15 checks passed in every mode (clean, faults, crash, reprocess).
+a missing or malformed `since`, that the API's database user can `SELECT`, and that its `INSERT` is
+rejected with a ClickHouse permission error (164 READONLY or 497 ACCESS_DENIED; a refused connection
+or a wrong password now counts as a failure). In the 2026-10-13/14 runs the script had 15 checks and
+the local output (`results/run/api-smoke-*.txt`, not committed) showed all of them passing in every
+mode; the stricter INSERT check and the `SELECT` control were added later and still need a re-run
+against the stack.
 
 ## Tests
 
@@ -236,11 +262,12 @@ a missing or malformed `since`, and that the API's database user cannot `INSERT`
 | sink tests | `ClickHouseWriterTest` | fake ClickHouse (JDK `HttpServer`): batching, flush on checkpoint, 5xx retry, no 4xx retry, rows kept for replay on failure |
 | API slice tests | `BatteryControllerTest`, `OpenApiDocTest` | validation, 400/404/503 problem+json, parameter pass-through, OpenAPI content |
 | replayer tests | `ReplayPlanTest` | determinism per seed, fault shapes, one fault per cycle, heartbeat placement, pacing |
-| README pins | `ReadmeNumbersTest` | every number in the Results section equals its results file |
+| README pins | `ReadmeNumbersTest` | every number in this README that carries a results-file pin comment equals its results file, and the number of pins it checked equals the number of pin comments (so a table it cannot parse fails the build) |
 
 `mvn verify` runs all of the above without Docker; CI (`.github/workflows/ci.yml`) runs it on
 ubuntu-latest with JDK 17 and then runs PIT. The end-to-end runs need Docker and the NASA files, so
-they are not in CI.
+they are not in CI. CI also fails if PIT drops below 94 % (`mutationThreshold` in `bsa-core/pom.xml`)
+and if a tracked text file contains a local drive or home-directory path.
 
 **Mutation testing.** PIT on the alert rules (`bsa.core.rules`): first run 204/233 mutants killed
 (87.6 %); the survivors exposed six untested behaviours, which `MutationGapTest` now covers; second
@@ -324,7 +351,20 @@ or host names. OpenAPI document at `/v3/api-docs`, Swagger UI at `/swagger-ui.ht
 ## Data
 
 B. Saha and K. Goebel (2007). *Battery Data Set*, NASA Prognostics Data Repository, NASA Ames
-Research Center, Moffett Field, CA. The catalog page does not state a licence, so neither the raw
+Research Center, Moffett Field, CA. Download: entry 5, "Battery Data Set", on the
+[PCoE data set repository](https://www.nasa.gov/intelligent-systems-division/discovery-and-systems-health/pcoe/pcoe-data-set-repository/)
+page. B0005, B0006, B0007 and B0018 are in the inner archive `1. BatteryAgingARC-FY08Q4.zip`.
+[`results/nasa-inputs.json`](results/nasa-inputs.json) records the SHA-256 of the outer archive, the
+inner archive and the four `.mat` files as downloaded on 2026-11-09, plus what `convert_nasa.py`
+produced from them; `python scripts/check_nasa_inputs.py --raw-dir <mat folder> --data-dir ./data`
+checks a local copy before you start Docker. Converting that download reproduced the sample and cycle
+counts of the October runs (a test checks the two files agree):
+
+| converter output (2026-11-09 download) | value | source |
+|---|---|---|
+| samples (rows of `telemetry.csv`) | 185721 | <!-- nasa-inputs.json:/converter/total_samples --> |
+| discharge cycles | 636 | <!-- nasa-inputs.json:/converter/discharge_cycles --> |
+ The catalog page does not state a licence, so neither the raw
 `.mat` files nor the converted CSV are in this repository. `scripts/convert_nasa.py` documents the
 conversion (discharge cycles only; event time = cycle start date vector, read as UTC, + `Time`).
 The only data committed is `fixtures/synthetic_telemetry.csv`, a small synthetic file generated by
@@ -338,12 +378,12 @@ bsa-replayer/   CSV -> Kafka replayer
 bsa-flink/      Flink job, ClickHouse sink (+ harness and MiniCluster tests)
 bsa-api/        Spring Boot API (+ MVC slice tests)
 clickhouse/     schema/users init script, low-memory config
-scripts/        convert_nasa.py, demo.sh, api-smoke.sh, collect_results.py, hand-mutations.sh, mvn-docker.sh
-results/        e2e-*.json (pinned in this README), pit-summary.md, hand-mutations.md
+scripts/        convert_nasa.py, check_nasa_inputs.py, demo.sh, api-smoke.sh, collect_results.py, hand-mutations.sh, mvn-docker.sh
+results/        e2e-*.json and nasa-inputs.json (pinned in this README), pit-summary.md, hand-mutations.md
 docs/           WALKTHROUGH.md (Chinese walkthrough of every class)
 fixtures/       synthetic test data
 ```
 
 ## License
 
-Code: MIT (see `LICENSE`). NASA PCoE battery data (Saha & Goebel 2007) is not redistributed; only a synthetic test fixture and aggregate results are committed.
+Code: MIT (see `LICENSE`); third-party terms: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). NASA PCoE battery data (Saha & Goebel 2007) is not redistributed; only a synthetic test fixture and aggregate results are committed.

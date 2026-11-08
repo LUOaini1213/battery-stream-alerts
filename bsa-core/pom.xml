@@ -46,6 +46,8 @@
             <outputFormat>XML</outputFormat>
           </outputFormats>
           <timestampedReports>false</timestampedReports>
+          <!-- README and results/pit-summary.md quote 219/233 killed (94 %); fail the build below that -->
+          <mutationThreshold>94</mutationThreshold>
           <threads>2</threads>
         </configuration>
       </plugin>
