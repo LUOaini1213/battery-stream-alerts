@@ -1,0 +1,41 @@
+{
+  "_note": "Checked 2026-11-09 against the public NASA archive; scripts/check_nasa_inputs.py verifies a local copy against this file.",
+  "archive_url": "https://phm-datasets.s3.amazonaws.com/NASA/5.+Battery+Data+Set.zip",
+  "archive_sha256": "82302a7db4fc1b34e0b6676326610438d43b816bdf11a69d1d012a464ef2f92e",
+  "inner_zip": "5. Battery Data Set/1. BatteryAgingARC-FY08Q4.zip",
+  "inner_zip_sha256": "f3a4fcd7c3434e06906f4222778445ce6ad42f49c5c78a785bdd676b7c223a2e",
+  "mat_sha256": {
+    "B0005": "0eae4585baf3f200c09fe24c5ab884f1889679fc75206ca1aa19da704104f0b0",
+    "B0006": "fa818ab4db5db8ab21e910b6dd6c3e20d3761bb9672089e1a4de8f96074616c5",
+    "B0007": "d022afa086efaf54ab5b63f05220f5be178c8027e2fa8d68589db0e85a441a3b",
+    "B0018": "d1e6c923a43ea1c9666b3a90bbb521757a067fd60b4d17dbfaa49c50b179da69"
+  },
+  "converter": {
+    "command": "python scripts/convert_nasa.py --raw-dir <folder with the four .mat files> --out-dir ./data",
+    "python": "3.11.5",
+    "numpy": "2.4.6",
+    "scipy": "1.17.1",
+    "total_samples": 185721,
+    "discharge_cycles": 636,
+    "per_cell": {
+      "B0005": {
+        "discharge_cycles": 168,
+        "samples": 50285
+      },
+      "B0006": {
+        "discharge_cycles": 168,
+        "samples": 50285
+      },
+      "B0007": {
+        "discharge_cycles": 168,
+        "samples": 50285
+      },
+      "B0018": {
+        "discharge_cycles": 132,
+        "samples": 34866
+      }
+    },
+    "telemetry_csv_sha256": "e1846609c40fad7537af72b73047a943cb744a1dca789d85108e91434960f231",
+    "reference_capacity_csv_sha256": "1c9c08236ae97d7862862427b458903540c9170c8c80dd4f19e99295ef68705b"
+  }
+}

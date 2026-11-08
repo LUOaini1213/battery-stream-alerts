@@ -31,10 +31,18 @@ check "unknown type -> 400"          400 "$API/api/v1/alerts?since=2008-04-02T00
 check "missing since -> 400"         400 "$API/api/v1/alerts"
 check "bad since -> 400"             400 "$API/api/v1/alerts?since=yesterday"
 
-# the API's database user must not be able to write
-code=$(curl -s -o /tmp/bsa-smoke-body -w '%{http_code}' -u "bsa_reader:$READER_PW" "$CH_URL/" \
-  --data-binary "INSERT INTO bsa.alerts (alert_id, cell_id, alert_type, severity, event_time_ms, window_start_ms, window_end_ms, cycle, detail, max_ingest_ms, emitted_ms) VALUES (generateUUIDv4(), 'X', 'X', 'X', 0, 0, 0, 0, '', 0, 0)")
-if [ "$code" != "200" ]; then echo "PASS reader cannot INSERT ($code: $(grep -o 'Code: [0-9]*' /tmp/bsa-smoke-body | head -1))"; else echo "FAIL reader could INSERT"; fail=1; fi
+# the API's database user can read (positive control: proves the URL and password below are right) ...
+code=$(curl -s -o /tmp/bsa-smoke-body -w '%{http_code}' -u "bsa_reader:$READER_PW" "$CH_URL/"   --data-binary "SELECT count() FROM bsa.alerts")
+if [ "$code" = "200" ]; then echo "PASS reader can SELECT (200)"; else echo "FAIL reader cannot SELECT: got $code: $(head -c 300 /tmp/bsa-smoke-body)"; fail=1; fi
+# ... but must not be able to write. Only a ClickHouse permission error counts: 164 READONLY or
+# 497 ACCESS_DENIED. Connection refused (000) or a wrong password (516) is a FAIL, not a PASS.
+code=$(curl -s -o /tmp/bsa-smoke-body -w '%{http_code}' -u "bsa_reader:$READER_PW" "$CH_URL/"   --data-binary "INSERT INTO bsa.alerts (alert_id, cell_id, alert_type, severity, event_time_ms, window_start_ms, window_end_ms, cycle, detail, max_ingest_ms, emitted_ms) VALUES (generateUUIDv4(), 'X', 'X', 'X', 0, 0, 0, 0, '', 0, 0)")
+err=$(grep -oE 'Code: [0-9]+' /tmp/bsa-smoke-body | head -1)
+if [ "$code" != "200" ] && { [ "$err" = "Code: 164" ] || [ "$err" = "Code: 497" ]; }; then
+  echo "PASS reader cannot INSERT ($code: $err)"
+else
+  echo "FAIL reader INSERT not rejected with a permission error: got $code ${err:-no ClickHouse error code}"; fail=1
+fi
 rm -f /tmp/bsa-smoke-body
 [ "$fail" = 0 ] && echo "ALL API SMOKE CHECKS PASSED"
 exit "$fail"

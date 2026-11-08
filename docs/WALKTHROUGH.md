@@ -1,6 +1,6 @@
 # 代码导读（中文）
 
-这份文档按"数据从哪里来、经过哪些类、最后落到哪里"的顺序，把每个 Java 类讲一遍。目标是：面试时能用自己的话把整条链路讲清楚，并回答"为什么这样设计"。
+这份文档按"数据从哪里来、经过哪些类、最后落到哪里"的顺序，把每个 Java 类讲一遍，并记录每处"为什么这样设计"。
 
 ## 0. 一句话版本
 
@@ -27,7 +27,7 @@ CSV ──Replayer──▶ Kafka topic bms.telemetry (4 分区, key = 电芯ID)
 - `scripts/convert_nasa.py`：读 B0005/6/7/18 四个 `.mat` 文件，只取放电（discharge）循环，每个采样点输出一行：`event_time_ms, cell_id, cycle, seq, voltage_v, current_a, temperature_c`。
   - **事件时间** = 循环开始时间（文件里的 MATLAB 日期向量）+ 循环内的 `Time` 秒数。原数据没写时区，我们统一当 UTC，保证可复现。
   - 同时输出 `reference_capacity.csv`：NASA 自己算好的每循环容量，用来**核对**流式计算出的容量对不对。
-  - 原始数据和转换结果都放在仓库外（`D:\data\bsa\`），不提交：NASA 目录页没有写许可证。
+  - 原始数据和转换结果都放在 `./data`（`BSA_DATA_DIR` 的默认值，已在 `.gitignore` 中排除），不提交：NASA 目录页没有写许可证。
 - `scripts/make_synthetic_fixture.py`：生成测试用的小合成数据（2 个电芯 × 8 个循环 × 45 个点），每种告警都是**故意设计出来**的，所以测试能断言精确数量。
 
 ## 2. bsa-core：纯 Java 的模型和规则（不依赖 Flink）
@@ -43,7 +43,7 @@ CSV ──Replayer──▶ Kafka topic bms.telemetry (4 分区, key = 电芯ID)
 | `CycleSummary` | 一个放电循环结束后的汇总：样本数、缺失数、积分容量、最低电压、最高温度、SOH 等。 |
 
 ### 规则（`bsa.core.rules`）
-| 类 | 做什么 | 面试时可以讲的点 |
+| 类 | 做什么 | 设计理由 |
 |---|---|---|
 | `Thresholds` | 所有阈值集中在一处，可用环境变量覆盖；`validate()` 检查自相矛盾的配置（比如会话间隔必须大于最大采样间隔，否则一个缺口就会把循环切成两半）。 | 阈值怎么来的：物理范围是宽松的"传感器坏了"判据；40°C 过温是为 24°C 实验室数据设的演示值（按电芯规格书 60°C 的话这批数据一个都不会触发），README 里写明了。 |
 | `DataQualityGate` | 对每个样本判定：越界？迟到？重复？顺序固定：先越界，再迟到，最后重复。 | "迟到"的定义来自 Flink 的水位线约定：水位线 W 表示"时间戳 ≤ W 的数据不会再来"，所以 `eventTime <= W` 就是迟到。 |
@@ -81,7 +81,7 @@ CSV ──Replayer──▶ Kafka topic bms.telemetry (4 分区, key = 电芯ID)
 | `sink.ClickHouseSink` / `ClickHouseWriter` | 自己写的 Sink V2：攒批，满 5000 行、或 1 秒、或 **Flink 做 checkpoint 前调用 `flush()`** 时，用 HTTP `INSERT ... FORMAT JSONEachRow` 写入。5xx/网络错误指数退避重试，4xx（权限、SQL 错）不重试；重试用完就抛异常让任务失败 → Flink 从上个 checkpoint 重来。 |
 | `sink.Rows` | 对象 → ClickHouse 列名映射；NaN 转成 NULL（JSON 没有 NaN）。 |
 
-### 交付语义怎么讲（面试高频）
+### 交付语义
 - **Flink 内部状态**：checkpoint 用 EXACTLY_ONCE 屏障对齐，状态是精确一次的。
 - **写 ClickHouse**：**至少一次**。checkpoint 前会 flush，所以 checkpoint 之前的数据一定落库；失败后从 checkpoint 重放，checkpoint 之后已经写过的行会再写一遍。
 - **为什么结果仍然是"效果上精确一次"**：每行都有确定性主键（样本 = 电芯+循环+seq；告警 = 确定性 alertId），表引擎是 `ReplacingMergeTree`，相同排序键的行在后台合并时去重；查询加 `FINAL` 在读的时候就去重。`demo.sh crash`（中途 kill -9 作业容器）和 `demo.sh reprocess`（整个 topic 重算一遍、每行写两次）两个实验验证了这一点，数字在 README。
@@ -118,7 +118,7 @@ CSV ──Replayer──▶ Kafka topic bms.telemetry (4 分区, key = 电芯ID)
 | 端到端 | `scripts/demo.sh` + `scripts/api-smoke.sh` | 真 Redpanda + ClickHouse + 作业 + API，真实 NASA 回放；数字写进 `results/`，README 里的数字由 `ReadmeNumbersTest` 钉住。 |
 | 手工变异 | `scripts/hand-mutations.sh` | 20 处手工"弄坏"（包括 Flink 接线、sink、API 校验），第一轮抓到 18 个。漏掉的两个：回放器不重排序是真漏洞，已补测试；容量衰减"倒序释放"是等价变异——Flink 按时间戳顺序触发事件时间定时器，每次 `onTimer` 只会有一个到期时间戳。另外第一次跑这个脚本时踩了个坑：`mv` 还原文件会保留旧的修改时间，Maven 增量编译就不重新编译，后面所有结果都被前一个变异污染；现在还原后会 `touch`。 |
 
-## 8. 可能被问到的问题
+## 8. 设计 FAQ
 
 - **为什么用 Flink 不用 Kafka Streams / Spark？** 需要事件时间、会话窗口、按键状态 + 定时器、checkpoint 恢复，这些是 Flink 的强项；Kafka Streams 也能做，但会话窗口 + 跨通道重排序的写法没这么直接；Spark Structured Streaming 是微批，延迟和逐条状态控制不如 Flink。
 - **水位线设多少？** 20 秒。NASA 采样间隔约 9.4–20 秒，注入的界内乱序是 5 秒。越大越能容忍乱序，但窗口结果出得越晚。
